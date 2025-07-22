@@ -3,7 +3,7 @@ package echoApi
 import (
 	"bytes"
 	"github.com/labstack/echo/v4"
-	"github.com/preceeder/go/base"
+	"github.com/preceeder/go.base"
 	"log/slog"
 	"net/http"
 	"reflect"

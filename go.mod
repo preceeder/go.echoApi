@@ -4,7 +4,7 @@ go 1.24.2
 
 require (
 	github.com/labstack/echo/v4 v4.13.3
-	github.com/preceeder/go/base v1.0.10
+	github.com/preceeder/go.base v1.0.0
 )
 
 require (

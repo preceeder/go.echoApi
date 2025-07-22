@@ -4,9 +4,10 @@ import (
 	_ "base-utils/echoTest/api/auth"
 	"fmt"
 	"github.com/labstack/echo/v4"
-	"github.com/preceeder/go/base"
+	"github.com/preceeder/go.base"
+	"github.com/preceeder/go.echoApi"
+	"github.com/preceeder/go.logs"
 	"github.com/preceeder/go/echoApi"
-	"github.com/preceeder/go/logs"
 	"log/slog"
 	"slices"
 )

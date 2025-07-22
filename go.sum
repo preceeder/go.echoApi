@@ -11,6 +11,7 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/preceeder/go.base v1.0.0/go.mod h1:FwXJaIj7FJhbqSZZBe6EYHrmhOqF30XJyMm14GgtHP4=
 github.com/preceeder/go/base v1.0.4 h1:WTrlQNl6jkl97A68GAD99pUmcCP3CiLCzc2wmDgEfT0=
 github.com/preceeder/go/base v1.0.4/go.mod h1:eHmCioRYVqwt3wk4aOM04DuBoV1W4+FN9NaTrVmgtQg=
 github.com/preceeder/go/base v1.0.10/go.mod h1:eHmCioRYVqwt3wk4aOM04DuBoV1W4+FN9NaTrVmgtQg=
