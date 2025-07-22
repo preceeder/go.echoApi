@@ -259,7 +259,7 @@ func matchRoute(route HandlerCache) echo.MiddlewareFunc {
 			if userId := c.Get("userId"); userId != nil {
 				ctx.UserId = base.UserId(c.Get("userId").(string))
 			}
-			gc := GContext{c, ctx}
+			gc := GContext{c, &ctx}
 			invokeArgs = append(invokeArgs, reflect.ValueOf(gc))
 			// 遍历 Params 参数绑定
 			for _, paramBind := range route.Params {
