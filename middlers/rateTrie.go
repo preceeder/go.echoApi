@@ -1,11 +1,24 @@
 package middlers
 
 import (
+	"encoding/json"
 	"golang.org/x/time/rate"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+type RateLimiterSnapshot struct {
+	Path     string    `json:"path"` // "/api/user/login/METHOD/KEY"
+	Tokens   float64   `json:"tokens"`
+	Rate     float64   `json:"rate"`
+	Burst    int       `json:"burst"`
+	LastSeen time.Time `json:"last_seen"`
+}
 
 type RouteLimitConfig struct {
 	limit    *rate.Limiter
@@ -14,19 +27,20 @@ type RouteLimitConfig struct {
 
 // SensitiveTrie
 type RateLimiterTrie struct {
-	root *TrieNode
+	root atomic.Value // 存 *TrieNode
+	//root  *TrieNode
 }
 
 // NewSensitiveTrie
 func NewSensitiveTrie() *RateLimiterTrie {
-	return &RateLimiterTrie{
-		root: &TrieNode{End: false},
-	}
+	t := &RateLimiterTrie{}
+	t.root.Store(&TrieNode{End: false})
+	return t
 }
 
 func (st *RateLimiterTrie) AddPath(limit *RouteLimitConfig, keys ...string) {
 	// 将敏感词转换成utf-8编码后的rune类型(int32)
-	trieNode := st.root
+	trieNode := st.root.Load().(*TrieNode)
 	for _, key := range keys {
 		key = strings.Trim(key, "/")
 		trieNode, _ = trieNode.AddChild(key)
@@ -38,17 +52,14 @@ func (st *RateLimiterTrie) AddPath(limit *RouteLimitConfig, keys ...string) {
 }
 
 func (st *RateLimiterTrie) GetAdd(pathKeys ...string) (*TrieNode, bool) {
-	if st.root == nil {
-		return nil, false
-	}
-	trieNode := st.root
+
+	trieNode := st.root.Load().(*TrieNode)
 	newAdd := false
 	for _, key := range pathKeys {
 		key = strings.Trim(key, "/")
 		trieNode, newAdd = trieNode.AddChild(key)
 	}
 	trieNode.mu.Lock()
-	trieNode.Data.limit = rate.NewLimiter(10, 10)
 	trieNode.End = true
 	trieNode.mu.Unlock()
 	return trieNode, newAdd
@@ -56,10 +67,7 @@ func (st *RateLimiterTrie) GetAdd(pathKeys ...string) (*TrieNode, bool) {
 
 // Match
 func (st *RateLimiterTrie) Match(pathKeys ...string) *TrieNode {
-	if st.root == nil {
-		return nil
-	}
-	trieNode := st.root
+	trieNode := st.root.Load().(*TrieNode)
 	for _, key := range pathKeys {
 		key = strings.Trim(key, "/")
 		trieNode = trieNode.FindChild(key)
@@ -96,7 +104,7 @@ func (st *RateLimiterTrie) WithLockedPath(path string, fn func(*TrieNode)) {
 	// 存储沿路径加锁的节点，便于逆序释放
 	var lockedNodes []*TrieNode
 
-	current := st.root
+	current := st.root.Load().(*TrieNode)
 	current.mu.Lock()
 	lockedNodes = append(lockedNodes, current)
 
@@ -116,6 +124,9 @@ func (st *RateLimiterTrie) WithLockedPath(path string, fn func(*TrieNode)) {
 
 	// 执行用户逻辑（防止 panic 导致锁未释放）
 	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("", "error", r)
+		}
 		for i := len(lockedNodes) - 1; i >= 0; i-- {
 			lockedNodes[i].mu.Unlock()
 		}
@@ -124,11 +135,64 @@ func (st *RateLimiterTrie) WithLockedPath(path string, fn func(*TrieNode)) {
 
 }
 
-func (st *RateLimiterTrie) GC() {
-	st.root.gcRecursive()
+func (st *RateLimiterTrie) GC(writeFile bool, filepath string) {
+	root := st.root.Load().(*TrieNode)
+
+	// 全新的一棵树
+	newRoot := cloneNode(root)
+	if writeFile {
+		err := st.DumpToFile(newRoot, filepath)
+		if err != nil {
+			slog.Error("快照写入文件失败", "error", err)
+		}
+	}
+
+	// 清理副本树上过期节点
+	cleanupTrie(newRoot)
+	// 替换
+	st.root.Store(newRoot)
 }
 
-// TrieNode 前缀树节点
+// Snapshot 拷贝快照
+func (st *RateLimiterTrie) Snapshot() *TrieNode {
+	root := st.root.Load().(*TrieNode)
+	return cloneNode(root)
+}
+
+func (st *RateLimiterTrie) DumpToFile(triNode *TrieNode, path string) error {
+	var snapshots []RateLimiterSnapshot
+	//snapshot := st.Snapshot()
+	st.collectSnapshot("", triNode, &snapshots)
+
+	data, err := json.Marshal(snapshots)
+	if err != nil {
+		return err
+	}
+
+	// 保证路径存在
+	os.MkdirAll(filepath.Dir(path), os.ModePerm)
+	return os.WriteFile(path, data, 0644)
+}
+
+func (st *RateLimiterTrie) collectSnapshot(prefix string, node *TrieNode, out *[]RateLimiterSnapshot) {
+	// 这里是快照拷贝的， 就不需要枷锁了
+	if node.End && node.Data != nil {
+		*out = append(*out, RateLimiterSnapshot{
+			Path:     prefix,
+			Rate:     float64(node.Data.limit.Limit()),
+			Burst:    node.Data.limit.Burst(),
+			Tokens:   node.Data.limit.Tokens(),
+			LastSeen: node.Data.lastSeen,
+		})
+	}
+
+	for k, child := range node.childMap {
+		newPrefix := prefix + "/" + k
+		st.collectSnapshot(newPrefix, child, out)
+	}
+}
+
+// TrieNode 前缀树节点,   path, method, key
 type TrieNode struct {
 	mu       sync.RWMutex
 	childMap map[string]*TrieNode // 本节点下的所有子节点
@@ -155,6 +219,7 @@ func (tn *TrieNode) AddChild(c string) (*TrieNode, bool) {
 			mu:       sync.RWMutex{},
 			childMap: nil,
 			End:      false,
+			Data:     &RouteLimitConfig{},
 			Parent:   tn,
 			Key:      c,
 		}
@@ -179,31 +244,6 @@ func (tn *TrieNode) RemoveChild(key string) {
 	}
 }
 
-// 只删除叶子节点
-func (tn *TrieNode) gcRecursive() {
-	tn.mu.RLock()
-	childrenSnapshot := make(map[string]*TrieNode, len(tn.childMap))
-	for k, v := range tn.childMap {
-		childrenSnapshot[k] = v
-	}
-	tn.mu.RUnlock()
-
-	for key, child := range childrenSnapshot {
-		if !child.End {
-			child.gcRecursive()
-		}
-		child.mu.RLock()
-		child.mu.RLock()
-		expired := child.End && child.Data != nil && time.Since(child.Data.lastSeen) > time.Minute
-		child.mu.RUnlock()
-		if expired {
-			tn.mu.Lock()
-			delete(tn.childMap, key)
-			tn.mu.Unlock()
-		}
-	}
-}
-
 // FindChild 前缀树查找字节点
 func (tn *TrieNode) FindChild(c string) *TrieNode {
 	tn.mu.RLock()
@@ -212,4 +252,37 @@ func (tn *TrieNode) FindChild(c string) *TrieNode {
 		return nil
 	}
 	return tn.childMap[c]
+}
+
+// 节点拷贝
+func cloneNode(node *TrieNode) *TrieNode {
+	if node == nil {
+		return nil
+	}
+	newNode := &TrieNode{
+		mu:       sync.RWMutex{},
+		childMap: make(map[string]*TrieNode),
+		End:      node.End,
+		Data:     node.Data, // 浅拷贝，RateLimiter是线程安全的
+		Key:      node.Key,
+	}
+	node.mu.RLock()
+	for k, v := range node.childMap {
+		child := cloneNode(v)
+		child.Parent = newNode
+		newNode.childMap[k] = child
+	}
+	node.mu.RUnlock()
+	return newNode
+}
+
+func cleanupTrie(node *TrieNode) {
+
+	for key, child := range node.childMap {
+		if child.End && child.Data != nil && time.Since(child.Data.lastSeen) > time.Minute {
+			delete(node.childMap, key)
+		} else {
+			cleanupTrie(child)
+		}
+	}
 }
