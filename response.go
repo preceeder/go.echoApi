@@ -3,68 +3,58 @@ package echoApi
 import "reflect"
 
 type HttpResponse interface {
-	GetResponse() any
-	GetCode() int
+	GetResponse(string) any
+	GetStatusCode() int
 }
 
 var HttpResponseType = reflect.TypeOf((*HttpResponse)(nil)).Elem()
 
 type BaseHttpResponse struct {
-	Success   bool      `json:"success"`
-	HttpCode  int       `json:"-"` // 默认情况下 http_code 和code 一致
-	Code      int       `json:"code"`
-	ErrorCode ErrorCode `json:"errorCode"`
-	Data      any       `json:"data"`
-	Message   string    `json:"message"`
+	StatusCode int    `json:"-"` // 默认情况下 http_code 和code 一致
+	RequestId  string `json:"requestId"`
+	Data       any    `json:"data"`
 }
 
-func (h BaseHttpResponse) GetResponse() any {
-	if h.Code == 0 {
-		return map[string]any{"success": h.Success, "code": 200, "errorCode": 0, "data": h.Data, "message": h.Message}
+func (h BaseHttpResponse) GetResponse(requestId string) any {
+	if h.StatusCode == 0 {
+		return map[string]any{"RequestId": requestId, "data": h.Data}
 	}
-	return map[string]any{"success": h.Success, "code": h.Code, "errorCode": 0, "data": h.Data, "message": h.Message}
+	return map[string]any{"RequestId": requestId, "data": h.Data}
 }
 
-func (h BaseHttpResponse) GetCode() int {
-	if h.HttpCode > 0 {
-		return h.HttpCode
+func (h BaseHttpResponse) GetStatusCode() int {
+	if h.StatusCode > 0 {
+		return h.StatusCode
 	}
-	if h.Code == 0 {
-		return 200
-	}
-	return h.Code
+	return 200
 }
 
 type HttpError interface {
-	GetCode() int // 正常情况都是 200， 错误情况一般是  403
-	GetResponse() any
+	GetStatusCode() int // 正常情况都是 200
+	GetResponse(string) any
 	Error() string
 }
 
 var HttpErrorType = reflect.TypeOf((*HttpError)(nil)).Elem()
 
 type BaseHttpError struct {
-	Success   bool       `json:"success"`
-	HttpCode  int        `json:"-"` // 默认情况下 http_code 和 code一致
-	Code      StatusCode `json:"code"`
-	ErrorCode ErrorCode  `json:"errorCode"`
-	Message   string     `json:"message"`
+	StatusCode int    `json:"-"` // 默认情况下 http_code 和 code一致
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	RequestId  string `json:"requestId"`
 }
 
-func (h BaseHttpError) GetResponse() any {
-	return map[string]any{"success": false, "errorCode": h.ErrorCode, "message": h.Message}
+func (h BaseHttpError) GetResponse(requestId string) any {
+	return map[string]any{"requestId": requestId, "code": h.Code, "message": h.Message}
 }
 
 func (h BaseHttpError) Error() string {
 	return h.Message
 }
 
-func (h BaseHttpError) GetCode() int {
-	if h.HttpCode > 0 {
-		return h.HttpCode
+func (h BaseHttpError) GetStatusCode() int {
+	if h.StatusCode > 0 {
+		return h.StatusCode
 	}
-	if h.Code == 0 {
-		return 403
-	}
-	return int(h.Code)
+	return 500
 }

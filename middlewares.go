@@ -2,13 +2,14 @@ package echoApi
 
 import (
 	"bytes"
+	"fmt"
 	"github.com/labstack/echo/v4"
-	"github.com/preceeder/go.base"
 	"log/slog"
 	"net/http"
 	"reflect"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,8 @@ import (
 func BaseErrorMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
+			// 生成 requestId
+			requestId := strconv.FormatInt(time.Now().UnixMilli(), 10) + RandStr(4)
 			defer func() {
 				if rec := recover(); rec != nil {
 					// 打印堆栈
@@ -33,44 +36,84 @@ func BaseErrorMiddleware() echo.MiddlewareFunc {
 
 					// 构造统一错误响应
 					htperr := BaseHttpError{
-						Code:      500,
-						ErrorCode: CodeSystemError,
-						Message:   "system error",
+						StatusCode: 500,
+						Message:    "system error",
 					}
-					_ = c.JSON(htperr.GetCode(), htperr.GetResponse())
+					_ = c.JSON(htperr.GetStatusCode(), htperr.GetResponse(requestId))
 				}
 			}()
 
-			// 生成 requestId
-			requestId := strconv.FormatInt(time.Now().UnixMilli(), 10) + RandStr(4)
 			c.Set("requestId", requestId)
 			return next(c)
 		}
 	}
 }
 
-var DefaultHeaders = map[string]string{
-	"Access-Control-Allow-Origin":      "*",
-	"Access-Control-Allow-Methods":     "OPTIONS,GET,POST,PUT,DELETE",
-	"Access-Control-Allow-Headers":     "Content-Length,Access-Control-Allow-Origin,Access-Control-Allow-Headers,Cache-Control,Content-Language,Content-Type,x-auth-version,x-auth-channel,x-auth-channel-detail,x-auth-package,x-auth-timestamp,x-auth-announce,x-auth-token,x-auth-app,x-auth-signature",
-	"Access-Control-Expose-Headers":    "Content-Length,Access-Control-Allow-Origin,Access-Control-Allow-Headers,Cache-Control,Content-Language,Content-Type",
-	"Access-Control-Allow-Credentials": "true",
+// CorsConfig CORS 配置
+type CorsConfig struct {
+	AllowOrigins     []string // 允许的源（生产环境不应使用 "*"）
+	AllowMethods     []string
+	AllowHeaders     []string
+	ExposeHeaders    []string
+	AllowCredentials bool
+	MaxAge           int
 }
 
-func CorsMiddleware() echo.MiddlewareFunc {
+// DefaultCorsConfig 默认 CORS 配置（开发环境）
+func DefaultCorsConfig() CorsConfig {
+	return CorsConfig{
+		AllowOrigins:     []string{"*"}, // 开发环境可以使用 "*"，生产环境应该指定具体域名
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With", "X-Username", "X-ChannelId"},
+		ExposeHeaders:    []string{"X-Username", "X-ChannelId"},
+		AllowCredentials: false, // 注意：当 AllowOrigins 包含 "*" 时，AllowCredentials 必须为 false
+		MaxAge:           86400,
+	}
+}
+
+// ToHeaders 将配置转换为 HTTP 头部
+func (c CorsConfig) ToHeaders() map[string]string {
+	headers := make(map[string]string)
+
+	if len(c.AllowOrigins) > 0 {
+		headers["Access-Control-Allow-Origin"] = strings.Join(c.AllowOrigins, ", ")
+	}
+	if len(c.AllowMethods) > 0 {
+		headers["Access-Control-Allow-Methods"] = strings.Join(c.AllowMethods, ",")
+	}
+	if len(c.AllowHeaders) > 0 {
+		headers["Access-Control-Allow-Headers"] = strings.Join(c.AllowHeaders, ",")
+	}
+	if len(c.ExposeHeaders) > 0 {
+		headers["Access-Control-Expose-Headers"] = strings.Join(c.ExposeHeaders, ",")
+	}
+	if c.AllowCredentials {
+		headers["Access-Control-Allow-Credentials"] = "true"
+	}
+	if c.MaxAge > 0 {
+		headers["Access-Control-Max-Age"] = fmt.Sprintf("%d", c.MaxAge)
+	}
+
+	return headers
+}
+
+// CorsMiddleware 创建 CORS 中间件
+func CorsMiddleware(config CorsConfig) echo.MiddlewareFunc {
+	headers := config.ToHeaders()
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			req := c.Request()
 			res := c.Response()
 
-			// 设置默认 CORS 响应头（你可以定义 DefaultHeaders）
-			for key, value := range DefaultHeaders {
+			// 设置 CORS 响应头
+			for key, value := range headers {
 				res.Header().Set(key, value)
 			}
 
 			// OPTIONS 请求直接返回
 			if req.Method == http.MethodOptions {
-				return c.NoContent(http.StatusOK)
+				return c.NoContent(http.StatusNoContent)
 			}
 
 			return next(c)
@@ -140,6 +183,11 @@ func (r *ResponseInterceptor) WriteHeader(code int) {
 func InterceptMiddleware(f func(c echo.Context, w *ResponseInterceptor) []byte) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			// WebSocket 升级请求跳过响应拦截（避免干扰握手）
+			if c.Request().Header.Get("Upgrade") == "websocket" {
+				return next(c)
+			}
+			
 			orig := c.Response().Writer
 
 			writer := &ResponseInterceptor{
@@ -180,6 +228,11 @@ func EchoResponseAndRecoveryHandler(
 ) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			// WebSocket 升级请求跳过响应处理中间件（避免干扰握手）
+			if c.Request().Header.Get("Upgrade") == "websocket" {
+				return next(c)
+			}
+			
 			requestId, _ := c.Get("requestId").(string)
 			var resStatus = http.StatusInternalServerError
 
@@ -190,14 +243,17 @@ func EchoResponseAndRecoveryHandler(
 						if errorResponseHandler != nil {
 							he = errorResponseHandler(c, he)
 						}
-						_ = c.JSON(he.GetCode(), he.GetResponse())
-						resStatus = he.GetCode()
+						statusCode := he.GetStatusCode()
+						_ = c.JSON(statusCode, he.GetResponse(requestId))
+						resStatus = statusCode
 					} else {
-						_ = c.JSON(resStatus, map[string]any{
-							"success":   false,
-							"errorCode": 10000,
-							"message":   "",
-						})
+						// 统一错误响应格式
+						_ = c.JSON(resStatus, BaseHttpError{
+							StatusCode: resStatus,
+							Code:       "INTERNAL_ERROR",
+							Message:    "内部服务器错误",
+							RequestId:  requestId,
+						}.GetResponse(requestId))
 					}
 
 					slog.Error("Recovery from panic",
@@ -224,12 +280,12 @@ func EchoResponseAndRecoveryHandler(
 					if errorResponseHandler != nil {
 						val = errorResponseHandler(c, val)
 					}
-					return c.JSON(val.GetCode(), val.GetResponse())
+					return c.JSON(val.GetStatusCode(), val.GetResponse(requestId))
 				case HttpResponse:
 					if normalResponseHandler != nil {
 						val = normalResponseHandler(c, val)
 					}
-					return c.JSON(val.GetCode(), val.GetResponse())
+					return c.JSON(val.GetStatusCode(), val.GetResponse(requestId))
 				default:
 					return c.JSON(http.StatusOK, val)
 				}
@@ -240,89 +296,29 @@ func EchoResponseAndRecoveryHandler(
 	}
 }
 
-// 路由匹配处理， 内部使用
-func matchRoute(route HandlerCache) echo.MiddlewareFunc {
-	handlerFunc := func(f echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			// 准备反射参数
-			err := f(c)
-			if err != nil {
-				return err
-			}
-
-			invokeArgs := []reflect.Value{}
-
-			// Handler 第一个参数是 receiver，所以 nil
-			//invokeArgs = append(invokeArgs, reflect.Value{})
-
-			ctx := base.Context{RequestId: c.Get("requestId").(string)}
-			if userId := c.Get("userId"); userId != nil {
-				ctx.UserId = base.UserId(c.Get("userId").(string))
-			}
-			gc := GContext{c, &ctx}
-			invokeArgs = append(invokeArgs, reflect.ValueOf(gc))
-			// 遍历 Params 参数绑定
-			for _, paramBind := range route.Params {
-				// 生成参数对象
-				var paramType reflect.Type = paramBind.Params
-				var isPtr = false
-				if paramBind.Params.Kind() == reflect.Ptr {
-					paramType = paramBind.Params.Elem()
-					isPtr = true
-				}
-
-				arg := reflect.New(paramType)
-				err = c.Bind(arg.Interface())
-				if err != nil {
-					slog.Error("", "paramBind", arg.Interface(), "err", err.Error())
-				}
-
-				// 设置默认值
-				if len(paramBind.DefaultData) > 0 {
-					fillParamWithDefault(arg.Elem(), paramBind.DefaultData)
-				}
-				if isPtr {
-					invokeArgs = append(invokeArgs, arg)
-				} else {
-					invokeArgs = append(invokeArgs, arg.Elem())
-				}
-			}
-
-			// 调用
-			out := route.HandlerFunc.Call(invokeArgs)
-
-			if len(out) > 0 && !out[0].IsNil() {
-				c.Set("Response", out[0].Interface())
-			}
-			return nil
-		}
-	}
-	return handlerFunc
-}
-
-func fillParamWithDefault(arg reflect.Value, defaultData map[string]*reflect.Value) {
+// fillParamWithDefaultOptimized 优化版本的默认值填充（使用字段索引而非字段名）
+// 性能优化：避免运行时 FieldByName 查找
+func fillParamWithDefaultOptimized(arg reflect.Value, defaultFields []DefaultFieldInfo) {
 	argType := arg.Type()
 
-	for i := 0; i < argType.NumField(); i++ {
-		field := argType.Field(i)
-		valueField := arg.Field(i)
+	for _, fieldInfo := range defaultFields {
+		if fieldInfo.FieldIndex >= argType.NumField() {
+			continue
+		}
 
+		valueField := arg.Field(fieldInfo.FieldIndex)
 		if !valueField.CanSet() {
 			continue
 		}
 
-		fieldName := field.Name
-
-		// 看当前值是不是零值
+		// 只有在值为零值时才设置默认值
 		if isZero(valueField) {
-			if defVal, ok := defaultData[fieldName]; ok {
-				valueField.Set(*defVal)
+			// 确保类型兼容
+			if fieldInfo.DefaultVal.Type().AssignableTo(valueField.Type()) {
+				valueField.Set(fieldInfo.DefaultVal)
+			} else if fieldInfo.DefaultVal.Type().ConvertibleTo(valueField.Type()) {
+				valueField.Set(fieldInfo.DefaultVal.Convert(valueField.Type()))
 			}
-		}
-
-		// 如果是匿名嵌套结构体，递归
-		if field.Anonymous && valueField.Kind() == reflect.Struct {
-			fillParamWithDefault(valueField, defaultData)
 		}
 	}
 }

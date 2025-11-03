@@ -3,6 +3,7 @@ module github.com/preceeder/go.echoApi
 go 1.24.2
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/labstack/echo/v4 v4.13.3
 	github.com/preceeder/go.base v1.0.0
 	github.com/stretchr/testify v1.10.0

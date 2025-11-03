@@ -24,12 +24,22 @@ func buildDefaultData(t reflect.Type) map[string]*reflect.Value {
 			continue
 		}
 
-		// 匿名字段，递归处理
+		// 匿名字段，递归处理（只处理结构体类型的匿名字段）
 		if field.Anonymous {
-			subData := buildDefaultData(field.Type)
-			for k, v := range subData {
-				defaultData[k] = v
+			ft := field.Type
+			if ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
 			}
+			// 只处理结构体类型的匿名字段，跳过接口类型和其他类型
+			if ft.Kind() == reflect.Struct {
+				// 传入处理后的类型 ft（已解引用的结构体类型）
+				// 这样 buildDefaultData 就能正确处理了
+				subData := buildDefaultData(ft)
+				for k, v := range subData {
+					defaultData[k] = v
+				}
+			}
+			// 跳过接口类型、基本类型等其他类型的匿名字段
 			continue
 		}
 
@@ -223,4 +233,53 @@ func splitComma(s string) []string {
 		}
 	}
 	return res
+}
+
+// buildDefaultFieldsWithIndex 构建基于字段索引的默认值列表（性能优化）
+// 避免运行时使用 FieldByName 查找字段
+func buildDefaultFieldsWithIndex(elemType reflect.Type) []DefaultFieldInfo {
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+	}
+	if elemType.Kind() != reflect.Struct {
+		return nil
+	}
+
+	// 首先构建默认值数据映射
+	// buildDefaultData 内部会处理指针类型，所以直接传入 elemType 即可
+	defaultData := buildDefaultData(elemType)
+
+	var fields []DefaultFieldInfo
+	for i := 0; i < elemType.NumField(); i++ {
+		field := elemType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		fieldName := field.Name
+		
+		// 优先使用字段名查找
+		if defVal, ok := defaultData[fieldName]; ok {
+			fields = append(fields, DefaultFieldInfo{
+				FieldIndex: i,
+				DefaultVal: *defVal,
+			})
+			continue
+		}
+
+		// 检查 JSON 标签名
+		if tagName := field.Tag.Get("json"); tagName != "" && tagName != "-" {
+			jsonName := strings.Split(tagName, ",")[0]
+			if jsonName != fieldName {
+				if defVal, ok := defaultData[jsonName]; ok {
+					fields = append(fields, DefaultFieldInfo{
+						FieldIndex: i,
+						DefaultVal: *defVal,
+					})
+				}
+			}
+		}
+	}
+
+	return fields
 }

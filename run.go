@@ -36,17 +36,19 @@ func Run(r *echo.Echo, srvName string, addr string, stop func()) {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	slog.Info("Shutting Down project ...", "server-name", addr)
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-	defer cancel()
+	
+	// 先执行 stop 回调
 	if stop != nil {
 		stop()
 	}
+	
+	// 优雅关闭服务器，最多等待30秒
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("stop error ", "svrName", srvName, "err", err.Error())
-	}
-
-	select {
-	case <-ctx.Done():
+	} else {
 		slog.Info("stop success ", "svrName", srvName)
 	}
 

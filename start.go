@@ -11,9 +11,13 @@ type EchoConfig struct {
 	HideServerMiddleLogHeaders bool   `json:"hideServerMiddleLogHeaders"` // 是否隐藏内置中间件 http 日志 中的 headers   这个配置生效的前提是  hideServerMiddleLog=false
 }
 
-func NewEcho(config EchoConfig, middlewares ...echo.MiddlewareFunc) *echo.Echo {
+func NewEcho(config EchoConfig, corsConfig CorsConfig, middlewares ...echo.MiddlewareFunc) *echo.Echo {
 	r := echo.New()
-	var baseMiddleWares = []echo.MiddlewareFunc{BaseErrorMiddleware(), CorsMiddleware(), EchoLogger(config.HideServerMiddleLog, config.HideServerMiddleLogHeaders)}
+	var baseMiddleWares = []echo.MiddlewareFunc{
+		BaseErrorMiddleware(),
+		CorsMiddleware(corsConfig),
+		EchoLogger(config.HideServerMiddleLog, config.HideServerMiddleLogHeaders),
+	}
 	if len(middlewares) > 0 {
 		baseMiddleWares = append(baseMiddleWares, middlewares...)
 	}
