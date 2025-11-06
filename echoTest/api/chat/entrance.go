@@ -1,7 +1,7 @@
 package chat
 
 import (
-	"github.com/preceeder/go.echoApi"
+	"github.com/preceeder/echoApi"
 )
 
 type Chat struct{}
@@ -40,4 +40,3 @@ func init() {
 		panic("注册 Chat 控制器失败: " + err.Error())
 	}
 }
-

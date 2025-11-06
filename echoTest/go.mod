@@ -4,16 +4,16 @@ go 1.24.2
 
 require (
 	github.com/labstack/echo/v4 v4.13.3
-	github.com/preceeder/go.base v1.0.0
+	github.com/preceeder/base v1.0.0
 )
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/preceeder/go.echoApi v0.0.0-20250729015734-b2c3c6b444a4
-	github.com/preceeder/go.logs v0.0.0-20250814080742-be6b5fff8831
+	github.com/preceeder/echoApi v0.0.0-20250729015734-b2c3c6b444a4
+	github.com/preceeder/logs v0.0.0-20250814080742-be6b5fff8831
 )
 
-replace github.com/preceeder/go.echoApi v0.0.0-20250729015734-b2c3c6b444a4 => /Users/wang/Desktop/GO/src/base-utils/echoApi
+replace github.com/preceeder/echoApi v0.0.0-20250729015734-b2c3c6b444a4 => /Users/wang/Desktop/GO/src/base-utils/echoApi
 
 require (
 	github.com/labstack/gommon v0.4.2 // indirect

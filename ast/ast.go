@@ -58,6 +58,8 @@ func main() {
 	}
 }
 
+// checkFile 检查文件是否包含实现了 Controller 接口的类型
+// Controller 接口要求实现 RouteConfig() echoApi.RouteConfig 方法
 func checkFile(path string) string {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, path, nil, 0)
@@ -66,28 +68,51 @@ func checkFile(path string) string {
 		return ""
 	}
 
-	var mud string
+	var hasController bool
+
+	// 遍历 AST，查找实现了 RouteConfig() echoApi.RouteConfig 方法的类型
 	ast.Inspect(node, func(n ast.Node) bool {
-		ts, ok := n.(*ast.TypeSpec)
+		// 查找方法声明
+		fn, ok := n.(*ast.FuncDecl)
 		if !ok {
 			return true
 		}
-		structType, ok := ts.Type.(*ast.StructType)
-		if !ok {
+
+		// 检查方法名是否为 RouteConfig
+		if fn.Name == nil || fn.Name.Name != "RouteConfig" {
 			return true
 		}
-		for _, field := range structType.Fields.List {
-			if t, ok := field.Type.(*ast.SelectorExpr); ok {
-				if ident, ok := t.X.(*ast.Ident); ok {
-					if ident.Name == "echoApi" && t.Sel.Name == "ApiRouteConfig" {
-						mud = filepath.Dir(path)
+
+		// 检查是否有接收者（必须是方法，不是函数）
+		if fn.Recv == nil || len(fn.Recv.List) == 0 {
+			return true
+		}
+
+		// 检查返回类型是否为 echoApi.RouteConfig
+		if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
+			return true
+		}
+
+		// 检查返回类型
+		for _, result := range fn.Type.Results.List {
+			if sel, ok := result.Type.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == "echoApi" {
+					if sel.Sel.Name == "RouteConfig" {
+						hasController = true
+						return false // 找到就停止遍历
 					}
 				}
 			}
 		}
+
 		return true
 	})
-	return mud
+
+	if hasController {
+		return filepath.Dir(path)
+	}
+
+	return ""
 }
 
 func contains(slice []string, target string) bool {

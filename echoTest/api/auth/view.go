@@ -2,7 +2,8 @@ package auth
 
 import (
 	"fmt"
-	"github.com/preceeder/go.echoApi"
+	"github.com/labstack/echo/v4"
+	"github.com/preceeder/echoApi"
 	"net/http"
 	"time"
 )
@@ -17,7 +18,7 @@ type Dte struct {
 // GetToken 获取 Token 的接口
 // 路由: GET /api/token
 // 参数会自动从 query string 绑定到 Dte 结构体，Age 字段如果未提供则默认为 18
-func (a *Auth) GetToken(c echoApi.GContext, req *Dte) echoApi.HttpResponse {
+func (a *Auth) GetToken(c echo.Context, req *Dte) echoApi.HttpResponse {
 	fmt.Println("接收到的参数:", req)
 
 	// 方式1: 直接使用 c.JSON 返回（但返回 nil 让中间件处理统一响应格式）
@@ -33,7 +34,7 @@ func (a *Auth) GetToken(c echoApi.GContext, req *Dte) echoApi.HttpResponse {
 // GetTime 获取当前时间的接口
 // 路由: GET /api/time
 // 不需要额外参数，只需要 GContext
-func (a *Auth) GetTime(c echoApi.GContext) echoApi.HttpResponse {
+func (a *Auth) GetTime(c echo.Context) echoApi.HttpResponse {
 	return echoApi.BaseHttpResponse{
 		Data: map[string]any{
 			"time":      time.Now().Format("2006-01-02 15:04:05"),
@@ -80,7 +81,7 @@ type CreateDataBody struct {
 	Tags        []string `json:"tags"`                // body 参数，数组类型
 }
 
-func (a *Auth) CreateData(c echoApi.GContext, query *CreateDataQuery, body *CreateDataBody) echoApi.HttpResponse {
+func (a *Auth) CreateData(c echo.Context, query *CreateDataQuery, body *CreateDataBody) echoApi.HttpResponse {
 	// 整合 query 和 body 数据
 	result := map[string]any{
 		"query": map[string]any{

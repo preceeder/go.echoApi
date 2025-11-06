@@ -1,4 +1,4 @@
-module github.com/preceeder/go.echoApi
+module github.com/preceeder/echoApi
 
 go 1.24.2
 

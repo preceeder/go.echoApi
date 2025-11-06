@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"github.com/preceeder/go.echoApi"
+	"github.com/preceeder/echoApi"
 )
 
 type Auth struct{}
@@ -23,7 +23,7 @@ func (a *Auth) RouteConfig() echoApi.RouteConfig {
 				Path:     "/time",
 				FuncName: a.GetTime, // 支持函数引用形式
 				CtxParams: map[string]string{
-					"PrintResponse": "true",
+					"PrintResponse":  "true",
 					"ResponseSecret": "false",
 				},
 			},
@@ -31,7 +31,7 @@ func (a *Auth) RouteConfig() echoApi.RouteConfig {
 				Path:     "/token",
 				FuncName: a.GetToken, // 支持函数引用形式
 				CtxParams: map[string]string{
-					"PrintResponse": "true",
+					"PrintResponse":  "true",
 					"ResponseSecret": "false",
 				},
 			},
@@ -42,7 +42,7 @@ func (a *Auth) RouteConfig() echoApi.RouteConfig {
 				Path:     "/create",
 				FuncName: a.CreateData, // POST 接口，整合 query 和 body 参数
 				CtxParams: map[string]string{
-					"PrintResponse": "true",
+					"PrintResponse":  "true",
 					"ResponseSecret": "false",
 				},
 			},

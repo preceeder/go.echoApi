@@ -5,9 +5,9 @@ import (
 	_ "base-utils/echoTest/api/chat" // 导入 WebSocket 控制器包，触发 init 注册
 	"fmt"
 	"github.com/labstack/echo/v4"
-	"github.com/preceeder/go.base"
-	"github.com/preceeder/go.echoApi"
-	"github.com/preceeder/go.logs"
+	"github.com/preceeder/base"
+	"github.com/preceeder/echoApi"
+	"github.com/preceeder/logs"
 	"log/slog"
 	"slices"
 )
@@ -47,7 +47,7 @@ func main() {
 					base.Context{RequestId: requestId, UserId: userId},
 					"Method", req.Method,
 					"url", req.URL.String(),
-					"响应数据", "body", logs.LogStr(resp.Body.String()),
+					"响应数据", "body", resp.Body.String(),
 				)
 			} else if slices.Contains([]string{"POST", "PUT"}, req.Method) {
 				// POST 和 PUT 请求默认打印响应日志

@@ -3,30 +3,9 @@ package echoApi
 import (
 	"bytes"
 	"github.com/labstack/echo/v4"
-	"github.com/preceeder/go.base"
 	"io"
 	"net/url"
 )
-
-type HandlerFunc func(c *GContext)
-
-//func Handle(h HandlerFunc) echo.HandlerFunc {
-//	return func(c echo.Context) error {
-//		ctx := &GContext{
-//			Context:   c,
-//			RequestId: c.Get("requestId"),
-//			UContext: base.Context{
-//				RequestId: c.Get("requestId"),
-//			},
-//		}
-//		h(ctx)
-//	}
-//}
-
-type GContext struct {
-	echo.Context
-	UContext base.BaseContext
-}
 
 type ParamsData struct {
 	Body  any
