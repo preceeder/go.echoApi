@@ -2,6 +2,7 @@ package echoApi
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"log/slog"
@@ -13,11 +14,12 @@ import (
 	"time"
 )
 
+// 约定 在echo.Context 中 插入 context = conetxt.Context{}, 携带reqeustId属性
 // BaseErrorMiddleware 全局 panic 捕获中间件（Echo 版本）
 func BaseErrorMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) (err error) {
-			// 生成 requestId
+			// 生成 requestId,
 			requestId := strconv.FormatInt(time.Now().UnixMilli(), 10) + RandStr(4)
 			defer func() {
 				if rec := recover(); rec != nil {
@@ -28,8 +30,7 @@ func BaseErrorMiddleware() echo.MiddlewareFunc {
 					slog.Error("base panic",
 						"err", rec,
 						"trace", trace,
-						"REQUESTID", c.Get("requestId"),
-						"USERID", c.Get("userId"), // Echo 中从 context 中取值
+						"requestId", c.Get("requestId"),
 						"method", c.Request().Method,
 						"uri", c.Request().URL.Path,
 					)
@@ -42,8 +43,8 @@ func BaseErrorMiddleware() echo.MiddlewareFunc {
 					_ = c.JSON(htperr.GetStatusCode(), htperr.GetResponse(requestId))
 				}
 			}()
-
-			c.Set("requestId", requestId)
+			ctx := context.WithValue(context.Background(), "requestId", requestId)
+			c.Set("context", ctx)
 			return next(c)
 		}
 	}
@@ -125,7 +126,7 @@ func EchoLogger(serverLogHide, hideServerMiddleLogHeaders bool) echo.MiddlewareF
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			start := time.Now()
-
+			ctx := c.Get("context").(context.Context)
 			// 执行后续处理
 			err := next(c)
 			cost := time.Since(start)
@@ -144,15 +145,11 @@ func EchoLogger(serverLogHide, hideServerMiddleLogHeaders bool) echo.MiddlewareF
 			}
 
 			// 获取 client IP（可根据需要调整）
-			ip := c.Request().Header.Get("X-Forwarded-For")
-			if ip == "" {
-				ip = c.RealIP()
-			}
+			ip := c.RealIP()
 
 			slog.Info("",
 				"method", c.Request().Method,
-				"requestId", c.Get("requestId"),
-				"userId", c.Get("userId"),
+				"requestId", ctx.Value("requestId"),
 				"status", c.Response().Status,
 				"ip", ip,
 				"headers", headers,
@@ -183,11 +180,13 @@ func (r *ResponseInterceptor) WriteHeader(code int) {
 func InterceptMiddleware(f func(c echo.Context, w *ResponseInterceptor) []byte) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			ctx := c.Get("context").(context.Context)
+
 			// WebSocket 升级请求跳过响应拦截（避免干扰握手）
 			if c.Request().Header.Get("Upgrade") == "websocket" {
 				return next(c)
 			}
-			
+
 			orig := c.Response().Writer
 
 			writer := &ResponseInterceptor{
@@ -201,7 +200,7 @@ func InterceptMiddleware(f func(c echo.Context, w *ResponseInterceptor) []byte) 
 
 			err := next(c)
 			if err != nil {
-				slog.Error("响应拦截前处理失败", "error", err.Error(), "REQUEST", c.Get("requestId"))
+				slog.Error("响应拦截前处理失败", "error", err.Error(), "requestId", ctx.Value("requestId"))
 				return err
 			}
 			nb := f(c, writer)
@@ -209,7 +208,7 @@ func InterceptMiddleware(f func(c echo.Context, w *ResponseInterceptor) []byte) 
 			writer.ResponseWriter.WriteHeader(writer.status)
 			_, err = writer.ResponseWriter.Write(nb)
 			if err != nil {
-				slog.Error("响应拦截后处理失败", "error", err.Error(), "REQUEST", c.Get("requestId"))
+				slog.Error("响应拦截后处理失败", "error", err.Error(), "requestId", c.Get("requestId"))
 				return err
 			}
 			return nil
@@ -228,12 +227,14 @@ func EchoResponseAndRecoveryHandler(
 ) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			ctx := c.Get("context").(context.Context)
+
 			// WebSocket 升级请求跳过响应处理中间件（避免干扰握手）
 			if c.Request().Header.Get("Upgrade") == "websocket" {
 				return next(c)
 			}
-			
-			requestId, _ := c.Get("requestId").(string)
+
+			requestId := ctx.Value("requestId").(string)
 			var resStatus = http.StatusInternalServerError
 
 			defer func() {
