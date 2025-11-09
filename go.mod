@@ -3,9 +3,8 @@ module github.com/preceeder/echoApi
 go 1.24.2
 
 require (
-	github.com/gorilla/websocket v1.5.3
+	github.com/coder/websocket v1.8.14
 	github.com/labstack/echo/v4 v4.13.3
-	github.com/preceeder/go.base v1.0.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/time v0.8.0
 )

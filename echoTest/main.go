@@ -3,9 +3,9 @@ package main
 import (
 	_ "base-utils/echoTest/api/auth" // 导入控制器包，触发 init 注册
 	_ "base-utils/echoTest/api/chat" // 导入 WebSocket 控制器包，触发 init 注册
+	"context"
 	"fmt"
 	"github.com/labstack/echo/v4"
-	"github.com/preceeder/base"
 	"github.com/preceeder/echoApi"
 	"github.com/preceeder/logs"
 	"log/slog"
@@ -19,32 +19,19 @@ func main() {
 		Addr: ":8080",
 	}
 
-	// CORS 配置（使用默认配置，开发环境）
-	corsConfig := echoApi.DefaultCorsConfig()
-	// 如果需要自定义 CORS 配置，可以这样：
-	// corsConfig := echoApi.CorsConfig{
-	// 	AllowOrigins:     []string{"https://example.com"},
-	// 	AllowMethods:     []string{"GET", "POST", "PUT", "DELETE"},
-	// 	AllowHeaders:     []string{"Content-Type", "Authorization"},
-	// 	ExposeHeaders:    []string{"X-Username"},
-	// 	AllowCredentials: true,
-	// 	MaxAge:           86400,
-	// }
-
 	// 创建 Echo 实例并应用中间件
 	r := echoApi.NewEcho(
-		config,
-		corsConfig,
+		echoApi.BaseErrorMiddleware(),
+		echoApi.CorsMiddleware(echoApi.DefaultCorsConfig()),
+		echoApi.EchoLogger(config.HideServerMiddleLog, config.HideServerMiddleLogHeaders),
 		// 响应拦截中间件（用于日志记录、加密等）
 		echoApi.InterceptMiddleware(func(c echo.Context, resp *echoApi.ResponseInterceptor) []byte {
 			req := c.Request()
-			requestId, _ := c.Get("requestId").(string)
-			userId, _ := c.Get("userId").(string)
 
 			// 根据配置决定是否打印响应日志
 			if c.Get("PrintResponse") == "true" {
 				slog.InfoContext(
-					base.Context{RequestId: requestId, UserId: userId},
+					c.Get("context").(context.Context),
 					"Method", req.Method,
 					"url", req.URL.String(),
 					"响应数据", "body", resp.Body.String(),
@@ -52,7 +39,7 @@ func main() {
 			} else if slices.Contains([]string{"POST", "PUT"}, req.Method) {
 				// POST 和 PUT 请求默认打印响应日志
 				slog.InfoContext(
-					base.Context{RequestId: requestId, UserId: userId},
+					c.Get("context").(context.Context),
 					"Method", req.Method,
 					"url", req.URL.String(),
 					"响应数据", "body", logs.LogStr(resp.Body.String()),

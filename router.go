@@ -2,9 +2,10 @@ package echoApi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 	"github.com/labstack/echo/v4"
 	"io"
 	"log/slog"
@@ -620,7 +621,7 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 	// 核心 WebSocket 处理器
 	coreHandler := func(c echo.Context) error {
 		// 首先检查是否是 WebSocket 升级请求，如果不是则返回错误
-		if !websocket.IsWebSocketUpgrade(c.Request()) {
+		if !isWebSocketUpgrade(c.Request()) {
 			return c.String(http.StatusBadRequest, "WebSocket upgrade required")
 		}
 
@@ -631,21 +632,19 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 			}
 		}
 
-		// 检测是否是 WebSocket 升级请求
-		upgrader := websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				// 生产环境应该检查 Origin，这里为了演示允许所有来源
-				// 实际使用时应该从 CORS 配置中获取允许的源
-				return true
-			},
+		// 设置 context
+		if cx := c.Get("context"); cx != nil {
+			ctx := cx.(context.Context)
+			ctx = context.WithValue(ctx, "remote_ip", c.RealIP())
 		}
 
-		// 升级连接为 WebSocket
-		conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+		// 检测是否是 WebSocket 升级请求
+		conn, err := websocket.Accept(c.Response().Writer, c.Request(), &websocket.AcceptOptions{
+			OriginPatterns: []string{"*"},
+		})
 		if err != nil {
 			return err
 		}
-
 		// 注意：不要在这里 defer conn.Close()
 		// 连接的生命周期由 handler 函数管理
 
@@ -653,7 +652,7 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 		// WebSocket handler 签名应该是：func(c GContext, conn *websocket.Conn) error
 		numIn := methodType.NumIn()
 		if numIn < 2 {
-			conn.Close()
+			conn.Close(websocket.StatusPolicyViolation, "invalid websocket handler signature")
 			return fmt.Errorf("WebSocket handler 至少需要 2 个参数: GContext 和 *websocket.Conn, 当前有 %d 个参数", numIn)
 		}
 
@@ -665,7 +664,7 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 		connType := methodType.In(1)
 		expectedConnType := reflect.TypeOf((*websocket.Conn)(nil))
 		if connType != expectedConnType {
-			conn.Close()
+			conn.Close(websocket.StatusUnsupportedData, "websocket handler signature mismatch")
 			return fmt.Errorf("WebSocket handler 第二个参数必须是 *websocket.Conn, 当前是 %s, 期望是 %s", connType, expectedConnType)
 		}
 		args[1] = reflect.ValueOf(conn)
@@ -690,7 +689,7 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 					// handler 返回错误时，尝试关闭连接（Close 是幂等的）
 					// 但连接可能已经被 handler 关闭了
 					// 注意：不能通过 c.JSON 或 c.String 返回错误，因为连接已被 hijacked
-					conn.Close()
+					conn.Close(websocket.StatusInternalError, "handler returned error")
 					// WebSocket 连接已被 hijacked，返回 nil 避免 Echo 尝试写入响应
 					return nil
 				}
@@ -699,7 +698,7 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 
 		// handler 正常返回 nil 时，连接应该已经被 handler 内部关闭了
 		// 为了安全，再次关闭（Close 是幂等的，不会重复关闭已关闭的连接）
-		conn.Close()
+		conn.Close(websocket.StatusNormalClosure, "handler completed")
 		// WebSocket 连接已被 hijacked，返回 nil 避免 Echo 尝试写入响应
 		return nil
 	}
@@ -711,4 +710,16 @@ func buildWebSocketHandler(route Route) echo.HandlerFunc {
 	}
 
 	return handler
+}
+
+// isWebSocketUpgrade 判断请求是否为 WebSocket 升级
+func isWebSocketUpgrade(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+
+	connectionHeader := strings.ToLower(r.Header.Get("Connection"))
+	upgradeHeader := strings.ToLower(r.Header.Get("Upgrade"))
+
+	return strings.Contains(connectionHeader, "upgrade") && upgradeHeader == "websocket"
 }

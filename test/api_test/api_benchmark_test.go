@@ -2,9 +2,10 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +21,22 @@ const (
 	testDuration = 10 * time.Second // 压测持续时间
 	concurrency  = 100               // 并发数
 )
+
+func wsWriteJSON(ctx context.Context, conn *websocket.Conn, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return conn.Write(ctx, websocket.MessageText, data)
+}
+
+func wsReadJSON(ctx context.Context, conn *websocket.Conn, v any) error {
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
 
 // checkServerHealth 检查服务器是否运行
 func checkServerHealth() error {
@@ -339,7 +356,9 @@ func TestWebSocketLoadTest(t *testing.T) {
 
 			// 建立 WebSocket 连接
 			u, _ := url.Parse(wsBaseURL + "/api/ws")
-			conn, resp, err := websocket.DefaultDialer.Dial(u.String(), nil)
+			dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			conn, resp, err := websocket.Dial(dialCtx, u.String(), nil)
+			cancel()
 			if err != nil {
 				mu.Lock()
 				errorCount++
@@ -349,7 +368,7 @@ func TestWebSocketLoadTest(t *testing.T) {
 				}
 				return
 			}
-			defer conn.Close()
+			defer conn.Close(websocket.StatusNormalClosure, "test complete")
 
 			mu.Lock()
 			successCount++
@@ -358,30 +377,38 @@ func TestWebSocketLoadTest(t *testing.T) {
 			// 发送一些消息
 			messageCount := 0
 			for time.Since(start) < testDuration && messageCount < 100 {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				msg := map[string]interface{}{
 					"type":    "message",
 					"content": fmt.Sprintf("消息%d", messageCount),
 					"connID":  connID,
 				}
-				if err := conn.WriteJSON(msg); err != nil {
+				if err := wsWriteJSON(ctx, conn, msg); err != nil {
+					cancel()
 					break
 				}
+				cancel()
 
+				readCtx, readCancel := context.WithTimeout(context.Background(), time.Second)
 				// 尝试读取响应（带超时）
-				conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 				var response map[string]interface{}
-				if err := conn.ReadJSON(&response); err != nil {
+				if err := wsReadJSON(readCtx, conn, &response); err != nil {
+					readCancel()
 					// 超时或错误，继续发送
-					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					status := websocket.CloseStatus(err)
+					if status == websocket.StatusGoingAway || status == websocket.StatusAbnormalClosure {
 						break
 					}
+					continue
 				}
+				readCancel()
 				messageCount++
 			}
 
 			// 发送关闭消息
-			closeMsg := map[string]interface{}{"type": "close"}
-			conn.WriteJSON(closeMsg)
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
+			_ = wsWriteJSON(closeCtx, conn, map[string]interface{}{"type": "close"})
+			closeCancel()
 		}(i)
 	}
 
@@ -422,7 +449,9 @@ func TestWebSocketEchoLoadTest(t *testing.T) {
 
 			// 建立 WebSocket 连接
 			u, _ := url.Parse(wsBaseURL + "/api/ws/echo")
-			conn, resp, err := websocket.DefaultDialer.Dial(u.String(), nil)
+			dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			conn, resp, err := websocket.Dial(dialCtx, u.String(), nil)
+			cancel()
 			if err != nil {
 				mu.Lock()
 				errorCount++
@@ -432,7 +461,7 @@ func TestWebSocketEchoLoadTest(t *testing.T) {
 				}
 				return
 			}
-			defer conn.Close()
+			defer conn.Close(websocket.StatusNormalClosure, "test complete")
 
 			mu.Lock()
 			successCount++
@@ -441,20 +470,26 @@ func TestWebSocketEchoLoadTest(t *testing.T) {
 			// 发送消息并接收回显
 			messageCount := 0
 			for time.Since(start) < testDuration && messageCount < 200 {
+				writeCtx, writeCancel := context.WithTimeout(context.Background(), time.Second)
 				msg := fmt.Sprintf("echo消息%d_conn%d", messageCount, connID)
-				if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+				if err := conn.Write(writeCtx, websocket.MessageText, []byte(msg)); err != nil {
+					writeCancel()
 					break
 				}
+				writeCancel()
 
 				// 读取回显
-				conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-				_, _, err := conn.ReadMessage()
+				readCtx, readCancel := context.WithTimeout(context.Background(), time.Second)
+				_, _, err := conn.Read(readCtx)
 				if err != nil {
-					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					readCancel()
+					status := websocket.CloseStatus(err)
+					if status == websocket.StatusGoingAway || status == websocket.StatusAbnormalClosure {
 						break
 					}
 					continue
 				}
+				readCancel()
 
 				mu.Lock()
 				totalMessages++
@@ -499,4 +534,5 @@ func TestAllAPIsLoadTest(t *testing.T) {
 	t.Run("WS /api/ws/echo", TestWebSocketEchoLoadTest)
 	t.Log("综合压测完成")
 }
+
 

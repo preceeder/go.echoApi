@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
 )
 
 // WebSocketClient WebSocket 客户端示例
@@ -30,11 +31,10 @@ func NewWebSocketClient(url string) *WebSocketClient {
 
 // Connect 连接到 WebSocket 服务器
 func (c *WebSocketClient) Connect() error {
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	conn, _, err := dialer.Dial(c.url, nil)
+	conn, _, err := websocket.Dial(ctx, c.url, nil)
 	if err != nil {
 		return fmt.Errorf("连接失败: %w", err)
 	}
@@ -52,28 +52,33 @@ func (c *WebSocketClient) Connect() error {
 // readPump 读取消息的 goroutine
 func (c *WebSocketClient) readPump() {
 	defer func() {
-		c.conn.Close()
+		c.conn.Close(websocket.StatusNormalClosure, "read loop exit")
 		close(c.msgCh)
 	}()
 
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		log.Println("📨 收到 Pong")
-		return nil
-	})
-
 	for {
-		messageType, message, err := c.conn.ReadMessage()
+		readCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		messageType, message, err := c.conn.Read(readCtx)
+		cancel()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				c.errCh <- fmt.Errorf("读取错误: %w", err)
+			status := websocket.CloseStatus(err)
+			if status == websocket.StatusGoingAway || status == websocket.StatusNormalClosure {
+				log.Printf("🔌 连接关闭: status=%d", status)
+			} else if status == websocket.StatusAbnormalClosure {
+				log.Printf("⚠️ 连接异常关闭: %v", err)
+			} else if status == -1 {
+				select {
+				case c.errCh <- fmt.Errorf("读取错误: %w", err):
+				default:
+				}
+			} else {
+				log.Printf("⚠️ 连接关闭: status=%d error=%v", status, err)
 			}
 			break
 		}
 
 		switch messageType {
-		case websocket.TextMessage:
+		case websocket.MessageText:
 			log.Printf("📥 收到文本消息: %s", string(message))
 
 			// 尝试解析为 JSON
@@ -84,24 +89,15 @@ func (c *WebSocketClient) readPump() {
 				log.Printf("📦 JSON 消息:\n%s", string(prettyJSON))
 			}
 
-		case websocket.BinaryMessage:
+		case websocket.MessageBinary:
 			log.Printf("📥 收到二进制消息: %d bytes", len(message))
 
-		case websocket.PingMessage:
-			log.Println("📨 收到 Ping")
-			c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-
-		case websocket.PongMessage:
-			log.Println("📨 收到 Pong")
-			c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-
-		case websocket.CloseMessage:
-			log.Println("🔌 收到关闭消息")
-			return
+		default:
+			log.Printf("📨 收到未知类型消息: %d", messageType)
+			continue
 		}
 
 		c.msgCh <- message
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	}
 }
 
@@ -113,16 +109,20 @@ func (c *WebSocketClient) writePump() {
 	for {
 		select {
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				c.errCh <- fmt.Errorf("发送 Ping 失败: %w", err)
+			pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := c.conn.Ping(pingCtx); err != nil {
+				cancel()
+				select {
+				case c.errCh <- fmt.Errorf("发送 Ping 失败: %w", err):
+				default:
+				}
 				return
 			}
+			cancel()
 			log.Println("📤 发送 Ping")
 
 		case <-c.done:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			c.conn.Close(websocket.StatusNormalClosure, "client shutdown")
 			return
 
 		case err := <-c.errCh:
@@ -134,8 +134,9 @@ func (c *WebSocketClient) writePump() {
 
 // SendMessage 发送文本消息
 func (c *WebSocketClient) SendMessage(message string) error {
-	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return c.conn.WriteMessage(websocket.TextMessage, []byte(message))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return c.conn.Write(ctx, websocket.MessageText, []byte(message))
 }
 
 // SendJSON 发送 JSON 消息
@@ -145,8 +146,10 @@ func (c *WebSocketClient) SendJSON(data interface{}) error {
 		return fmt.Errorf("序列化 JSON 失败: %w", err)
 	}
 
-	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	err = c.conn.WriteMessage(websocket.TextMessage, message)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err = c.conn.Write(ctx, websocket.MessageText, message)
 	if err == nil {
 		log.Printf("📤 发送 JSON 消息: %s", string(message))
 	}
@@ -155,8 +158,12 @@ func (c *WebSocketClient) SendJSON(data interface{}) error {
 
 // Close 关闭连接
 func (c *WebSocketClient) Close() {
-	close(c.done)
-	c.conn.Close()
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
+	}
+	c.conn.Close(websocket.StatusNormalClosure, "client closed")
 	log.Println("🔌 连接已关闭")
 }
 
