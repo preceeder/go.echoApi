@@ -539,9 +539,10 @@ func buildHandler(route Route) echo.HandlerFunc {
 		// 构建调用参数
 		invokeArgs := make([]reflect.Value, 1, paramsCount+1)
 
-		// 第一个参数是 GContext
 		ctx, _ := c.Get("context").(context.Context)
 		requestId := ctx.Value("requestId").(string)
+
+		// 第一个参数是 echo.Context
 		invokeArgs[0] = reflect.ValueOf(c)
 
 		// 绑定参数（支持多个参数）

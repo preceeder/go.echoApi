@@ -14,23 +14,45 @@ import (
 	"time"
 )
 
-func Run(r *echo.Echo, srvName string, addr string, stop func()) {
+func Run(r *echo.Echo, srvName string, addr string, stop func(), opts ...RunOption) {
+
+	options := &runOptions{}
+	if err := options.apply(opts); err != nil {
+		slog.Error("apply run options failed", "serverName", srvName, "err", err.Error())
+		return
+	}
 
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: r,
 	}
+	if options.tlsConfig != nil {
+		srv.TLSConfig = options.tlsConfig
+	}
+
 	//保证下面的优雅启停
 	go func() {
-		slog.Info("server running in ", "serverName", srvName, "addr", "http://"+srv.Addr, "swag", "http://"+srv.Addr+"/swagger/index.html")
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		scheme := "http"
+		if options.useTLS() {
+			scheme = "https"
+		}
+		slog.Info("server running in ", "serverName", srvName, "addr", scheme+"://"+srv.Addr, "swag", scheme+"://"+srv.Addr+"/swagger/index.html")
+
+		var err error
+		if options.useTLS() {
+			err = srv.ListenAndServeTLS(options.tlsCertFile, options.tlsKeyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+
+		if err != nil && err != http.ErrServerClosed {
 			slog.Error(err.Error())
 			os.Exit(2)
 		} else {
 			slog.Info("启动uri", "uri", addr)
 		}
 	}()
-	quit := make(chan os.Signal)
+	quit := make(chan os.Signal, 1)
 	//SIGINT 用户发送INTR字符(Ctrl+C)触发
 	//SIGTERM 结束程序(可以被捕获、阻塞或忽略)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

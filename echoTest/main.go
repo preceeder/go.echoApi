@@ -75,8 +75,13 @@ func main() {
 		),
 	)
 
+	var runOptions []echoApi.RunOption
+	if config.TLSCertFile != "" && config.TLSKeyFile != "" {
+		runOptions = append(runOptions, echoApi.WithTLSCertificates(config.TLSCertFile, config.TLSKeyFile))
+	}
+
 	// 启动服务器
 	echoApi.Run(r, config.Name, config.Addr, func() {
 		fmt.Println("服务器已停止")
-	})
+	}, runOptions...)
 }

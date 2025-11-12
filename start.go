@@ -7,6 +7,8 @@ import (
 type EchoConfig struct {
 	Name                       string `json:"name"`
 	Addr                       string `json:"addr"`
+	TLSCertFile                string `json:"tlsCertFile"`
+	TLSKeyFile                 string `json:"tlsKeyFile"`
 	HideServerMiddleLog        bool   `json:"hideServerMiddleLog"`        // 是否隐藏内置中间件的 http 日志
 	HideServerMiddleLogHeaders bool   `json:"hideServerMiddleLogHeaders"` // 是否隐藏内置中间件 http 日志 中的 headers   这个配置生效的前提是  hideServerMiddleLog=false
 }

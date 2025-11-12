@@ -3,6 +3,7 @@ package echoApi
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/labstack/echo/v4"
 	"log/slog"
@@ -273,6 +274,18 @@ func EchoResponseAndRecoveryHandler(
 			}()
 
 			err := next(c)
+			if err != nil {
+				var er *echo.HTTPError
+				if errors.As(err, &er) {
+					htperr := BaseHttpError{
+						StatusCode: er.Code,
+						Message:    err.Error(),
+					}
+					return c.JSON(htperr.StatusCode, htperr.GetResponse(requestId))
+				} else {
+					panic(err)
+				}
+			}
 
 			// 如果中间件或 handler 设置了返回值到 context
 			if v := c.Get("Response"); v != nil {
