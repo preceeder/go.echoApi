@@ -36,9 +36,16 @@ func GetRequestParamsEcho(c echo.Context) ParamsData {
 	}
 
 	return ParamsData{
-		Body:  string(body),
+		Body:  LogStr(body),
 		Query: query,
 		Url:   urlp,
 		Path:  pathParams,
 	}
+}
+
+// json 字符串可以不加转议符"\" 输出
+type LogStr string
+
+func (d LogStr) MarshalJSON() ([]byte, error) {
+	return []byte(d), nil
 }
